@@ -133,18 +133,17 @@ class Discriminator(object):
 		super(Discriminator, self).__init__()
 		self.feature_extractor = Feature_extractor()
 		self.d_max = self.feature_extractor.d_max
-		self.classifier = nn.Sequential(nn.Linear(2*self.d_max*4*4,200),nn.BatchNorm1d(200),nn.ReLU(),nn.Linear(200,1))
-	def forward(self,input_x,input_y):
-		feat_x = self.feature_extractor(input_x)
-		feat_y = self.feature_extractor(input_y)
-		feat_cat = torch.cat((feat_x,feat_y),dim = 1)
-		pred = self.classifier(feat_cat)
+		self.classifier = nn.Sequential(nn.Linear(self.d_max*4*4,200),nn.BatchNorm1d(200),nn.ReLU(),nn.Linear(200,1))
+	def forward(self,input):
+		feat = self.feature_extractor(input)
+		pred = self.classifier(feat)
 		return pred
 
-class ADDN(object):
+class Aaan(object):
 	"""docstring for ClassName"""
 	def __init__(self,latent_dim = 64):
-		super(ADDN, self).__init__()
+		super(Aaan, self).__init__()
+		self.loss = nn.MSELoss()
 		self.latent_dim = latent_dim
 		self.vae = VAE(self.latent_dim)
 		self.basic_block = BasicBlock(3,64)
@@ -152,9 +151,51 @@ class ADDN(object):
 		self.G2 = Generator(self.latent_dim)
 		self.Identity_Discriminator = Discriminator()
 		self.Sample_Discriminator = Discriminator()
-	def forward(self,origin_face,target_face):
-		results = namedtuple('target_latent')
+	def forward(self,origin_face,target_face,train_d = True):
+		result = namedtuple("construct_image","vae_loss","reconstruct_loss","gan_loss")
 		target_latent,vae_loss = self.vae(target_face)
+		origin_face_feat = self.basic_block(origin_face)
+		concat_feat = torch.cat((origin_face_feat,target_latent),dim = -1)
+		construct = self.G1(concat_feat)
+		back_construct = self.G2(construct)
+		reconstruct_loss = self.loss(construct,back_construct)
+
+		if train_d:
+			Identity_dloss = self.calculate_identity_loss(construct,target_face)
+			Sample_dloss = self.calculate_sample_loss(construct,origin_face)
+			d_loss = Identity_dloss+Sample_dloss
+			output = result(construct,vae_loss,reconstruct_loss,d_loss)
+			return output
+		else:
+			identity_pred = self.Identity_Discriminator(construct)
+			real_pred = self.Sample_Discriminator(construct)
+			labels = torch.ones(identity_pred.size())
+			g_loss = self.loss(identity_pred.sigmoid(),labels)+ self.loss(real_pred.sigmoid(),labels)
+			output = result(construct,vae_loss,reconstruct_loss,g_loss)
+			return output
+
+
+
+
+	def calculate_identity_loss(self,construct,target_face):
+		origin_pred = self.Identity_Discriminator(construct)
+		target_pred = self.Identity_Discriminator(target_face)
+		origin_label = torch.zeros(origin_pred.size())
+		target_label = torch.ones(target_pred.size())
+		ori_loss = self.loss(origin_pred.sigmoid(),origin_label)
+		target_loss = self.loss(target_pred.sigmoid(),target_label)
+		Identity_dloss = (ori_loss + target_loss)
+		return Identity_dloss
+	def calculate_sample_loss(self,construct,origin_face):
+		construct_pred = self.Sample_Discriminator(construct)
+		origin_pred = self.Sample_Discriminator(origin_face)
+		construct_label = torch.zeros(construct_pred.size())
+		origin_label = torch.ones(origin_face.size())
+		fake_loss = self.loss(construct_pred.sigmoid(),construct_label)
+		ori_loss = self.loss(origin_pred.sigmoid(),origin_label)
+		Identity_dloss = (fake_loss + ori_loss)
+		return Identity_dloss
+
 
 		
 
